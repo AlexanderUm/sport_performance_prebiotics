@@ -7,14 +7,14 @@
 # Define in and out folder (have to change)
 #----------------------------------------
 
-in_folder=/home/jovyan/work/pvc2/Britt/t1_t3_fastq
+in_folder=./fastq
 
-out_folder=/home/jovyan/work/pvc/Otten/q_14Jul23
+out_folder=./q_14Jul23
 
-q_env_path=/home/jovyan/work/conda_envs/qiime2/qiime2-2023.5
+q_env_path=./qiime2-2023.5
 
 # Taxanomic classification (path to classifier)
-tax_classif=/home/jovyan/work/pvc/tools/res/classif/silva-138-99-nb-weighted-classifier.qza
+tax_classif=./silva-138-99-nb-weighted-classifier.qza
 
 # meta_data=PVC/PERSON/meta.txt
 #----------------------------------------
@@ -127,17 +127,6 @@ qiime tools export \
 --input-path $out_folder/rep_seqs.qza \
 --output-path $out_folder/export/rep_seqs
   
-
-# # # Make summary (core analysis)
-# # # ----------------------------------------------------------------
-
-# # qiime diversity core-metrics-phylogenetic \
-# # --i-table $out_folder/asv_table.qza \
-# # --i-phylogeny $out_folder/tree/rooted-tree.qza \
-# # --p-sampling-depth $samp_deepth \
-# # --m-metadata-file $meta_data \
-# # --p-n-jobs-or-threads $n_threads \
-# # --output-dir $out_folder/core_analysis
 
 conda deactivate 
 

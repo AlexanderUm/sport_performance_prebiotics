@@ -540,4 +540,4 @@ for(i.prm in 1:nrow(prm.heat.grid)) {
 save(list = c("res.da.comb"),
      file = "out/supp/4_DA_res.RData")
 
-# rm(list = ls())
+rm(list = ls())
