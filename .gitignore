@@ -1,6 +1,15 @@
+.gitignore
 .Rproj.user/
 .Rhistory
-data/
-out/
+.Rdata
+.git/
 *.Rproj
 *.html
+data/
+out/
+manuscript/
+junk/
+report*
+
+
+

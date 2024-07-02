@@ -1,160 +1,215 @@
 #-------------------------------------------------------------------------------
-# Load libraries and set the environment 
+# Load data and functions
 #-------------------------------------------------------------------------------
-set.seed(549794)
-
-lib.to.load <- c("phyloseq", "tidyverse", "ggsignif", "broom")
-
-for (i in lib.to.load) {library(i, character.only = TRUE)}
-
-rm(list = c("i", "lib.to.load"))
-
-# Load data
+load("out/supp/prm.R")
 load("out/supp/0_data.RData")
 
+source("R/phy_alpha.R")
 
 #-------------------------------------------------------------------------------
-# Prepare data and calculate alpha diversity
+# Parameters 
 #-------------------------------------------------------------------------------
-ps.inst <- pss.ls$raw_asv
+gr.cols <- prm.ls[["general"]][["Group_cols"]]
 
-used.var <- c("TestDay", "Treatment", "PersonID", 
-              "Prebiotic", "TTE_Change", "Resp")
+id.col <- prm.ls[["general"]][["Prat_ID_col"]]
 
-div.measures <- c("Observed", "Shannon", "InvSimpson", "PhyloDiverity")
+preb.col <- prm.ls[["general"]][["Preb_col"]]
 
-group.vars <- c("Treatment", "Resp")
+part.id.col <- prm.ls[["general"]][["Prat_ID_col"]]
+
+seed <- prm.ls[["general"]][["seed"]]
+
+time.col.fact <- prm.ls[["general"]][["Time_col_fact"]]
+
+tax.lvl <- prm.ls[["alpha"]][["Tax_lvl"]]
+
+norm <- prm.ls[["alpha"]][["Norm"]]
+
+alpha.measur <- prm.ls[["alpha"]][["measures"]]
+
+dir.out <- prm.ls[["alpha"]][["out_dir_path"]]
+
+set.seed(seed)
 
 
+################################################################################
+#-------------------------------------------------------------------------------
+# Calculate alpha diversity
+#-------------------------------------------------------------------------------
+alpha.res.ls <- list()
+
+alpha.par.grid <- expand.grid("Tax_lvl" = tax.lvl, 
+                              "Normalization" = norm, 
+                              stringsAsFactors = FALSE)
 
 
-# Calculate diversity indexes 
-alpha.df <- estimate_richness(physeq = ps.inst, 
-                              measures = div.measures)
-
-if("PhyloDiverity" %in% div.measures) {
-# Calculate Phylogeny Diversity (package "picante")
-alpha.df$PhyloDiverity <- picante::pd(samp = t(otu_table(ps.inst)), 
-                                      tree = phy_tree(ps.inst), 
-                                      include.root = FALSE)  %>% 
-                                      select("PD")  %>%  
-                                      unlist()
+for(i.prm in 1:nrow(alpha.par.grid)) {
+  
+  lvl.inst <- alpha.par.grid[i.prm, "Tax_lvl"]
+  
+  norm.inst <- alpha.par.grid[i.prm, "Normalization"]
+  
+  name.inst <- paste0(lvl.inst, "--", norm.inst)
+  
+  ps.inst <- ps.ls[[lvl.inst]][[norm.inst]]
+  
+  alpha.tab.inst <- phy_alpha(ps.inst, measures = alpha.measur)
+  
+  alpha.res.ls[["index"]][[name.inst]] <- alpha.tab.inst
+  
+  # Write results 
+  dir.create(paste0(dir.out, "/tabs/"), recursive = TRUE, showWarnings = FALSE)
+  
+  write.csv(x = alpha.tab.inst, 
+            file = paste0(dir.out, "/tabs/", name.inst, "--diversity.csv"))
+  
 }
-
-# Add relevant columns 
-alpha.df.long <- ps.meta  %>%  
-                      select(all_of(used.var)) %>% 
-                      bind_cols(alpha.df)  %>% 
-                      gather(key = "Diversity_Index", 
-                             value = "Value", 
-                             -all_of(used.var)) 
 
 
 #-------------------------------------------------------------------------------
 # Pairwise comparison of Alpha diversity per group at TD1 vs TD3
 #-------------------------------------------------------------------------------
-# 1. Prepare data 
-# Remove samples without a pairs > sort samples
-alpha.df <- alpha.df.long %>% 
-                  group_by(across(c("Diversity_Index", 
-                                    "PersonID", 
-                                    ))) %>% 
-                  filter(n() == 2)  
-                
+comp.name <- paste(levels(ps.meta[[time.col.fact]]), collapse = "--vs--")
 
-# 2. Test (Paired Wilcoxon)
-wil.res.ls <- list()
+for(i.gr in gr.cols) {
+  
+  tests.grid <- expand.grid("Ind" = alpha.measur, 
+                          "Group" = levels(ps.meta[[i.gr]]), 
+                          stringsAsFactors = FALSE)
 
-for(i.gr.col in group.vars) {
-  
-  alpha.wilc.res <- NULL
-  
-  for (i in unique(alpha.df$Diversity_Index)) {
-  
-  for (i1 in unique(alpha.df[[i.gr.col]])) {
+  for(i.prm.set in names(alpha.res.ls[["index"]])) {
     
-    wil.df <- alpha.df %>% 
-                filter(Diversity_Index == i, 
-                       .data[[i.gr.col]] == i1) %>%
-                group_by(TestDay) %>%
-                arrange(PersonID, .by_group = TRUE) %>%
-                ungroup()
+    ind.tab.inst <- alpha.res.ls[["index"]][[i.prm.set]] %>% 
+                      cbind(., ps.meta)
     
-    alpha.wilc.res <- wilcox.test(Value ~ TestDay, 
-                                  paired = TRUE, 
-                                  data = wil.df) %>%
-              tidy() %>%
-              select(c("p.value")) %>%
-              mutate(Comparison = "TD1_vs_TD3",
-                     !!i.gr.col := i1,
-                     DivIndex = i) %>%
-              rbind(alpha.wilc.res, .)
+    wil.res.comb.df <- NULL
+    
+    for(i.test in 1:nrow(tests.grid)) {
+      
+      ind.inst <- tests.grid[[i.test, "Ind"]]
+      
+      gr.lvl.inst <- tests.grid[[i.test, "Group"]]
+      
+      form.inst <- paste0(ind.inst, "~", time.col.fact)
+      
+      # Prepare data 
+      ind.tab.inst.f <- ind.tab.inst %>% 
+                            dplyr::filter(.data[[i.gr]] == gr.lvl.inst) %>% 
+                            filter(n() == 2, .by = all_of(id.col)) %>% 
+                            arrange(across(all_of(c(time.col.fact, id.col)))) %>% 
+                            droplevels()
+      
+      # Wilcoxon test 
+      wil.res.comb.df <- wilcox.test(as.formula(form.inst), 
+                                    paired = TRUE, 
+                                    data = ind.tab.inst.f, 
+                                    exact = FALSE) %>% 
+                          tidy() %>%
+                          select(c("p.value")) %>%
+                          mutate(!!i.gr := gr.lvl.inst,
+                                 DivIndex = ind.inst) %>%
+                          rbind(wil.res.comb.df, .)
     }
-
+    
+    wil.res.comb.df <- wil.res.comb.df %>% 
+                          mutate(Comparision = comp.name,
+                                 Test = "Paired-Wilcoxon")
+    
+    alpha.res.ls[["Stat"]][[i.gr]][[i.prm.set]] <- wil.res.comb.df
+    
+    # Write results 
+    dir.create(paste0(dir.out, "/tabs/"), recursive = TRUE, showWarnings = FALSE)
+    
+    write.csv(x = wil.res.comb.df, 
+              file = paste0(dir.out, "/tabs/", i.gr, "--", 
+                            i.prm.set, "--stat.csv"))
+    
   }
-  
-  wil.res.ls[[i.gr.col]] <- alpha.wilc.res
-  
+
 }
 
 
 #-------------------------------------------------------------------------------
 # Plot Alpha diversity 
 #-------------------------------------------------------------------------------
-# Make data frame for significance levels 
-alpha.p.ls <- list()
-
-for(i.gr.col in group.vars) { 
+for(i.set in names(alpha.res.ls[["index"]])) {
   
-  wrap.form <- paste0("Diversity_Index ~ ", i.gr.col)
+  alpha.tab.l.inst <- alpha.res.ls[["index"]][[i.set]] %>% 
+                        cbind(ps.meta[, c(gr.cols, 
+                                          time.col.fact,
+                                          preb.col, 
+                                          part.id.col)]) %>% 
+                        pivot_longer(cols = all_of(alpha.measur), 
+                                     names_to = "Index")
   
-  max.div <- alpha.df %>% 
-                  group_by(across(c(i.gr.col, "Diversity_Index"))) %>% 
-                  slice(which.max(Value)) %>% 
-                  mutate(Id = paste0(Diversity_Index, 
-                                     "_", 
-                                     .data[[i.gr.col]]), 
-                         End = if_else(TestDay == "TD1", "TD3", "TD1"), 
-                         y = Value*1.1)
-  
-  sig.df <- wil.res.ls[[i.gr.col]] %>% 
-                mutate(Id = paste0(DivIndex, "_", .data[[i.gr.col]]), 
-                       p.short = paste0("p=", round(p.value, 3))) %>% 
-                filter(p.value <= 0.05) %>% 
-                left_join(., max.div)
-  
-  # Plot alpha diversity 
-  alpha.plot <- ggplot(alpha.df, aes(y = Value, x = TestDay)) + 
-                    geom_point(aes(color = Prebiotic), 
-                               size = 2, 
-                               alpha = 1) +
-                    geom_line(aes(group = PersonID, 
-                                  color = Prebiotic)) +
-                    geom_violin(fill = NA, alpha = 0.1) +
-                    geom_signif(data = sig.df,
-                                aes(xmin = TestDay,
-                                    xmax = End,
-                                    annotations = p.short,
-                                    y_position = y),
-                                textsize = 4, vjust = -0.1,
-                                manual = TRUE, margin_top = 1) +
-                    geom_point(data = sig.df,
-                               aes(x = End, y = y*1.175), x=NA) +
-                    facet_grid(as.formula(wrap.form), scales = "free") + 
-                    theme_bw() + 
-                    scale_color_manual(values = color.sch.ls$Prebiotic) + 
-                    xlab("Test Day") +
-                    theme(axis.title.x = element_text()) + 
-                    guides(colour = guide_legend(order = 2), 
-                           linetype = guide_legend(order = 1))
-
-  alpha.p.ls[[i.gr.col]] <- alpha.plot
+  for(i.gr.col in gr.cols) {
+    
+     wrap.form <- paste0("Index ~ ", i.gr.col)
+    
+     max.div <- alpha.tab.l.inst %>% 
+                    group_by(across(all_of(c(i.gr.col, "Index")))) %>% 
+                    slice(which.max(value)) %>% 
+                    mutate(Id = paste0(Index, 
+                                       "_", 
+                                       .data[[i.gr.col]]), 
+                           Start = levels(ps.meta[[time.col.fact]])[1],
+                           End = levels(ps.meta[[time.col.fact]])[2], 
+                           y = value*1.1)
+     
+     sig.df <- alpha.res.ls[["Stat"]][[i.gr.col]][[i.set]] %>% 
+                   mutate(Id = paste0(DivIndex, "_", .data[[i.gr.col]]), 
+                          p.short = ifelse(round(p.value, 3) == 0, 
+                                           "p<0.001", 
+                                           paste0("p=", round(p.value, 3)))) %>% 
+                   filter(p.value <= 0.05) %>% 
+                   left_join(., max.div)
+     
+     # Plot alpha diversity 
+     alpha.plot <- ggplot(alpha.tab.l.inst, 
+                              aes(y = value, 
+                                  x = .data[[time.col.fact]])) + 
+                           geom_point(aes(color = .data[[preb.col]]), 
+                                      size = 2, 
+                                      alpha = 1) +
+                           geom_line(aes(group = .data[[part.id.col]], 
+                                         color = .data[[preb.col]])) +
+                           geom_violin(fill = NA, alpha = 0.1) +
+                           geom_signif(data = sig.df,
+                                       aes(xmin = Start,
+                                           xmax = End,
+                                           annotations = p.short,
+                                           y_position = y),
+                                       textsize = 4, vjust = -0.1,
+                                       manual = TRUE, margin_top = 1) +
+                           geom_point(data = sig.df,
+                                      aes(x = End, y = y*1.175), x=NA) +
+                           facet_grid(as.formula(wrap.form), scales = "free") + 
+                           theme_bw() + 
+                           scale_color_manual(values = color.sch.ls$Prebiotic) + 
+                           xlab("Test Day") +
+                           theme(axis.title.x = element_text(), 
+                                 panel.grid.major = element_blank(), 
+                                 panel.grid.minor = element_blank()) + 
+                           guides(colour = guide_legend(order = 2), 
+                                  linetype = guide_legend(order = 1))
+     
+     
+   alpha.res.ls[["Plots"]][[i.gr.col]][[i.set]] <- alpha.plot
+   
+   dir.create(paste0(dir.out, "/plots/"), recursive = TRUE, showWarnings = FALSE)
+   
+   ggsave(paste0(dir.out, "/plots/", i.gr.col, "--", i.set, ".png"), 
+          plot = alpha.plot, 
+          width = 4.25, 
+          height = 1.25*length(alpha.measur) + 1, 
+          dpi = 600)
+    
+  }
   
 }
-  
 
-res.alpha <- list(Plot = alpha.p.ls, 
-                  Statistics = wil.res.ls)
-
-save(list = "res.alpha",
+################################################################################
+save(list = "alpha.res.ls",
      file = "out/supp/2_alpha_res.RData")
+
+rm(list = ls())

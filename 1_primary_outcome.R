@@ -1,38 +1,52 @@
 #-------------------------------------------------------------------------------
-# Load libraries and set the environment 
+# Load data and functions
 #-------------------------------------------------------------------------------
-set.seed(549794)
-
-lib.to.load <- c("phyloseq", "tidyverse", "ggsignif", "broom")
-
-for (i in lib.to.load) {library(i, character.only = TRUE)}
-
-rm(list = c("i", "lib.to.load"))
-
-# Load data
+load("out/supp/prm.R")
 load("out/supp/0_data.RData")
+
+#-------------------------------------------------------------------------------
+# Parameters 
+#-------------------------------------------------------------------------------
+seed <- prm.ls[["general"]][["seed"]]
+
+lmm.form <- prm.ls[["primary"]][["lmm_form"]]
+
+emmeans.form <- prm.ls[["primary"]][["emmeans_form"]]
+
+samp.to.remove <- prm.ls[["primary"]][["samp_to_remove"]]
+
+resp.var <- prm.ls[["primary"]][["resp_var"]]
+
+gr.var <- prm.ls[["primary"]][["gr_var"]]
+
+out.dir <- prm.ls[["primary"]][["out_dir_path"]]
+
+
+set.seed(seed)
+
+dir.create(out.dir, recursive = TRUE, showWarnings = FALSE)
 
 
 #-------------------------------------------------------------------------------
 # LMM for data
 #-------------------------------------------------------------------------------
-samp.to.remove <- c("R04", "R06", "R33")
-
 prime.data <- meta.data %>% 
                   filter(!PersonID %in% samp.to.remove)
 
-mod.rand.full <- "TTE ~ Age + Sex + Time*Treatment + (1|PersonID)"
 
 # Fit model 
-r.mod.full <- lmerTest::lmer(mod.rand.full, data = prime.data)
+r.mod.full <- lmerTest::lmer(as.formula(lmm.form), 
+                             data = prime.data)
 
 mod.sum <- summary(r.mod.full)
-
+  
 # Pairwise comparisons
 paired.mod.sum <- emmeans::emmeans(r.mod.full, 
-                                   pairwise ~ Time|Treatment, 
+                                   as.formula(emmeans.form), 
                                    type = "response")
 
+
+as.data.frame(mod.sum$coefficients)
 
 #-------------------------------------------------------------------------------
 # Model assessment  
@@ -54,17 +68,16 @@ res.qq <- ggplot(tdat,aes(sample=residual)) +
 #-------------------------------------------------------------------------------
 # Data for significance 
 max.div <- prime.data %>% 
-                dplyr::select(c("TTE", "Treatment")) %>% 
-                group_by(Treatment) %>% 
-                slice(which.max(TTE)) %>% 
-                mutate(y.adj = (TTE*1.1))
+                dplyr::select(all_of(c(resp.var, gr.var))) %>% 
+                slice(which.max(.data[[resp.var]]), .by = gr.var) %>% 
+                mutate(y.adj = (.data[[resp.var]]*1.1))
 
 sig.df <- paired.mod.sum$contrasts %>% 
                 as.data.frame() %>% 
-                mutate(p.short = paste0("p=", round(p.value, 4)), 
+                mutate(p.short = paste0("p=", round(p.value, 3)), 
                        Start = "TD1", 
                        End = "TD3") %>% 
-                left_join(., max.div, by = "Treatment")
+                left_join(., max.div, by = gr.var)
 
 
 # Plot data
@@ -102,25 +115,40 @@ perf.dif <- ggplot(prime.data, aes(y = TTE, x = TestDay)) +
                                                        Decrease = 6)) + 
                       scale_color_manual(values = color.sch.ls$Prebiotic) + 
                       xlab("Test Day") +
-                      ylab("TTE (sec)")
-                      theme(axis.title.x = element_text()) + 
+                      ylab("TTE (sec)") +
+                      theme(axis.title.x = element_text(), 
+                            panel.grid.major = element_blank(), 
+                            panel.grid.minor = element_blank()) + 
                       guides(colour = guide_legend(order = 2), 
                              linetype = guide_legend(order = 1))
 
-# Homogenuaty
 #-------------------------------------------------------------------------------
 # Save results
 #-------------------------------------------------------------------------------
-ggsave(filename = "out/plot/primary_out.png", plot = perf.dif, 
+ggsave(filename = paste0(out.dir, "/primary_out.png"), 
+       plot = perf.dif, 
        width = 5, height = 4)
+
+mod.sum$coefficients %>% 
+  as.data.frame() %>% 
+  mutate(across(everything(), function(x){round(x, 4)})) %>% 
+  write.csv(., file = paste0(out.dir, "/lmm_coeficients.csv"), 
+            row.names = FALSE)
+
+paired.mod.sum$contrasts %>% 
+  as.data.frame() %>% 
+  write.csv(., file = paste0(out.dir, "/emmens_contrasts.csv"), 
+            row.names = FALSE)
 
 prim.res <- list(Model = list("Full Model" = r.mod.full, 
                                "Model Summary" = mod.sum, 
                                "Paired Comparisons" = paired.mod.sum,
-                               "Formula" = mod.rand.full),
+                               "Formula" = lmm.form),
                  Plots = list(Main = perf.dif, 
                                 Homogeneity = homo.var, 
                                 QQplot = res.qq))
 
 save(list = "prim.res", 
      file = "out/supp/1_primary.RData")
+
+rm(list = ls())

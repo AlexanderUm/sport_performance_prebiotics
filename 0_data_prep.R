@@ -1,23 +1,49 @@
 #-------------------------------------------------------------------------------
-set.seed(549794)
+# Parameters 
+#-------------------------------------------------------------------------------
+load("out/supp/prm.R")
 
-lib.to.load <- c("phyloseq", "tidyverse", "qiime2R", 
-                 "metagenomeSeq", "RColorBrewer")
+seq.path <- prm.ls[["data_prep"]][["seq_path"]]
 
-for (i in lib.to.load) {library(i, character.only = TRUE)}
+meta.path <- prm.ls[["data_prep"]][["meta_path"]]
 
+samp.to.remove <- prm.ls[["data_prep"]][["samp_to_remove"]]
+
+remove.covid.from.phyloseq <- prm.ls[["data_prep"]][["remove_covid_from_phyloseq"]]
+
+min.reads <- prm.ls[["data_prep"]][["min_reads_tax"]]
+
+rare.depth <- prm.ls[["data_prep"]][["rare_depth"]]
+
+tax.king.keep <- prm.ls[["data_prep"]][["tax_king_keep"]]
+
+tax.kick <- prm.ls[["data_prep"]][["tax_kick"]]
+
+tax.lvls <- prm.ls[["data_prep"]][["tax_levels"]]
+
+r.seed <- prm.ls[["general"]][["seed"]]
+
+
+#-------------------------------------------------------------------------------
+# Functions
+#-------------------------------------------------------------------------------
 source("R/phy_shorten_tax_names.R")
+source("R/phy_norm.R")
+source("R/phy_prevalence_calc.R")
 
-#------------------------------------------------------------------------------
+set.seed(r.seed)
+
+
+prev.tabs.ls <- list()
+#-------------------------------------------------------------------------------
 # Data import
-#------------------------------------------------------------------------------
+#-------------------------------------------------------------------------------
 # Import data into phyloseq 
-ps.0 <- qza_to_phyloseq(features = "data/asv_table.qza", 
-                        tree = "data/tree/rooted-tree.qza", 
-                        taxonomy = "data/taxonomy_07.qza")
+ps.0 <- qza_to_phyloseq(features = paste0(seq.path, "/asv_table.qza"), 
+                        tree = paste0(seq.path, "/tree/rooted-tree.qza"), 
+                        taxonomy = paste0(seq.path, "/taxonomy_07.qza"))
 
-
-meta.data <- read.csv("data/sp_metadata_Britt.csv") %>% 
+meta.data <- read.csv(meta.path) %>% 
                   mutate(SeqID = as.character(X)) %>% 
                   rename(Sex = M_F, PersonID = Rnr) %>% 
                   mutate(Time = as.numeric(case_match(Timepoint, 
@@ -26,7 +52,7 @@ meta.data <- read.csv("data/sp_metadata_Britt.csv") %>%
                          Treatment = factor(case_match(Group, 
                                                        "GR1" ~ "CON", 
                                                        "GR2" ~ "PRE"), 
-                                            levels = c("CON", "PRE")), 
+                                            levels = c("PRE", "CON")), 
                          Prebiotic = factor(Prebiotic, 
                                             levels = c("Placebo", "FOS", "RS", 
                                                        "GOS", "Inulin")), 
@@ -38,26 +64,33 @@ meta.data <- read.csv("data/sp_metadata_Britt.csv") %>%
                                              "No_Change", 
                                              ifelse(Delta_TTE > 0, 
                                                      "Increase", "Decrease"))) %>% 
-                         mutate(TreatmentDay = as.factor(paste0(Treatment, 
-                                                                ":", TestDay)), 
-                                TimeGroupInter = interaction(Time, Treatment),
+                         mutate(TreatmentTestDay = as.factor(paste0(Treatment, 
+                                                                ":", TestDay)),
                                 TTE_log = log(TTE + 1), 
                                 Resp = factor(ifelse(Delta_TTE >= 180, 
                                               "RESP", "NONE"), 
-                                              levels = c("NONE", "RESP")))
+                                              levels = c("RESP", "NONE"))) %>% 
+                         mutate(RespTestDay = as.factor(paste0(Resp, ":", TestDay)))
 
 
 # Add metadata to phyloseq object
 ps.meta <- meta.data %>% 
                 filter(SeqID %in% intersect(meta.data$SeqID, 
                                   sample_names(ps.0))) %>% 
-                      group_by(PersonID) %>%
-                      filter(n() == 2) %>%
-                      ungroup() %>% 
-                      as.data.frame() %>% 
-                      droplevels() %>% 
-                      mutate(RowNAMES = SeqID) %>% 
-                      column_to_rownames("RowNAMES")
+                        group_by(PersonID) %>%
+                        filter(n() == 2) %>%
+                        ungroup() %>% 
+                        as.data.frame() %>% 
+                        droplevels() %>% 
+                        mutate(RowNAMES = SeqID) %>% 
+                        column_to_rownames("RowNAMES")
+
+if(remove.covid.from.phyloseq) {
+  
+  ps.meta <- meta.data %>% 
+                filter(!PersonID %in% samp.to.remove) %>% 
+                droplevels()
+}
 
 ps1 <- prune_samples(rownames(ps.meta), ps.0)
 
@@ -67,91 +100,81 @@ sample_data(ps1) <- ps.meta
                 
 
 #-------------------------------------------------------------------------------
-# Filter out very rare (artifacts) and contaminating taxa
-#-------------------------------------------------------------------------------
-#-------------------------------------------------------------------------------
 # Prune taxa 
 #-------------------------------------------------------------------------------
 # Taxa with less than 10 reads in total   
-ps1 <- prune_taxa(taxa_sums(ps.0) > 10, ps1)
+ps1 <- prune_taxa(taxa_sums(ps.0) > min.reads, ps1)
 
-# Remove ASVs: 
-# Kingdom: "d__Eukaryota", "Unassigned"
-# Genus: "Mitochondria"
-ps1 <- prune_taxa(!tax_table(ps1)[, "Genus"] %in% "Mitochondria", ps1)
+# Keep ASVs
+ps1 <- prune_taxa(tax_table(ps1)[, "Kingdom"] %in% tax.king.keep, ps1)
 
-ps1 <- prune_taxa(!tax_table(ps1)[, "Kingdom"] %in% c("d__Eukaryota", 
-                                                      "Unassigned"), ps1)
+# Kick ASVs
+for(i.kick in 1:length(tax.kick)) {
+  
+  kick.inst <- tax.kick[i.kick]
+  
+  ps1 <- prune_taxa(!tax_table(ps1)[, names(kick.inst)] %in% kick.inst, ps1)
+  
+}
+
 
 #-------------------------------------------------------------------------------
-# Make telling names 
+# Tax glom and count tranformation
 #-------------------------------------------------------------------------------
-taxa_names(ps1) <- phy_shorten_tax_names(ps1) %>% 
-                          gsub("_group", "", .) %>% 
-                          paste0(., "_asv", 1:length(taxa_names(ps1)))
+ps.ls <- list()
 
+for(i.lvl in tax.lvls)  {
+  
+  if(i.lvl == "ASV") {ps.inst <- ps1
+  
+  # Adjust taxa names
+  taxa_names(ps.inst) <- phy_shorten_tax_names(ps.inst) %>% 
+                              as.data.frame() %>% 
+                              setNames("feature") %>% 
+                              mutate(feature2 = if(n() > 1) {
+                                 paste0(feature, "__asv", row_number())} else {
+                                  paste0(feature, "__asv")}, .by = "feature") %>% 
+                              pull(feature2)
+  
+  } else { 
+    
+    ps.inst <- tax_glom(ps1, i.lvl, NArm = FALSE) 
+  
+    # Adjust taxa names
+    taxa_names(ps.inst) <- phy_shorten_tax_names(ps.inst) %>% 
+                                as.data.frame() %>% 
+                                setNames("feature") %>% 
+                                mutate(feature2 = if(n() > 1) {
+                                  paste0(feature, "__", 
+                                         tolower(str_sub(i.lvl, 1, 1)), 
+                                         row_number())} else {
+                                  feature}, .by = "feature") %>% 
+                                pull(feature2)
+  }
+  
+ 
+  
+  # Calculate prevalence per taxa 
+  prev.tabs.ls[[i.lvl]] <- phy_prevalence_calc(ps.inst, 
+                                    per_group_cols = c("Treatment", 
+                                                       "TestDay", 
+                                                       "Resp", 
+                                                       "RespTestDay"))
+  
+  # Transform count 
+  ps.rare <- rarefy_even_depth(ps.inst, 
+                               rngseed = r.seed)
+  
+  ps.rare.log <- transform_sample_counts(ps.rare, function(x) {log2(x + 1)})
+  
+  ps.ls[[i.lvl]] <- list("Raw" = ps.inst, 
+                         "Rare" = ps.rare, 
+                         "Rare_log2" = ps.rare.log,
+                         "CSS" = phy_css_norm(ps.inst), 
+                         "CLR" = phy_clr_norm(ps.inst), 
+                         "TSS" = phy_tss_norm(ps.inst, log2_transform = FALSE))
+}
 
-# Genus level
-ps1.genus <- tax_glom(ps1, "Genus")
-
-taxa_names(ps1.genus) <- phy_shorten_tax_names(ps1.genus) %>% 
-                            gsub("_group", "", .) %>% 
-                            make.unique()
-
-# Genus level
-ps1.family <- tax_glom(ps1, "Family")
-
-taxa_names(ps1.family) <- phy_shorten_tax_names(ps1.family) %>% 
-                                                gsub("_group", "", .) %>% 
-                                                make.unique()
-
-#-------------------------------------------------------------------------------
-# Phylseqs list
-#-------------------------------------------------------------------------------
-# CSS - ASV
-ps1.css.asv <- ps1
-
-otu_table(ps1.css.asv) <- ps1 %>% 
-                            phyloseq_to_metagenomeSeq(.) %>% 
-                            cumNorm(., p=cumNormStatFast(.)) %>% 
-                            MRcounts(., norm=TRUE, log=TRUE) %>% 
-                            as.data.frame() %>% 
-                            otu_table(., taxa_are_rows = TRUE)
-
-
-# CSS - Genus
-ps1.css.genus <- ps1.genus
-
-otu_table(ps1.css.genus) <- ps1.genus %>%
-                                phyloseq_to_metagenomeSeq(.) %>%
-                                cumNorm(., p=cumNormStatFast(.)) %>%
-                                MRcounts(., norm=TRUE, log=TRUE) %>%
-                                as.data.frame() %>%
-                                otu_table(., taxa_are_rows = TRUE)
-
-# Normalize count
-ps1.rare <- rarefy_even_depth(ps1, rngseed = 0745048)
-
-ps1.rare.genus <- rarefy_even_depth(ps1.genus, rngseed = 93475)
-
-#-------------------------------------------------------------------------------
-# Log transform
-#-------------------------------------------------------------------------------
-ps1.log.rare <- transform_sample_counts(ps1.rare, function(x) log(x + 1))
-
-ps1.log.rare.genus <- transform_sample_counts(ps1.rare.genus, function(x) log(x + 1))
-
-
-# Combine into a list
-pss.ls <- list(raw_asv = ps1, 
-               raw_genus = ps1.genus, 
-               raw_family = ps1.family,
-               css_asv = ps1.css.asv, 
-               css_genus = ps1.css.genus, 
-               rare_asv = ps1.rare, 
-               rare_genus = ps1.rare.genus, 
-               rare_log_asv = ps1.log.rare,
-               rare_log_genus = ps1.log.rare.genus)
 
 #-------------------------------------------------------------------------------
 # Color schema 
@@ -159,19 +182,24 @@ pss.ls <- list(raw_asv = ps1,
 # Groups color
 color.sch.ls <- list("TestDay" = brewer.pal(7, "Dark2")[c(1,3)] %>% 
                                     setNames(levels(meta.data$TestDay)), 
-                     "Treatment" = c("gray35", brewer.pal(7, "Set1")[c(2)]) %>% 
+                     "Treatment" = c(brewer.pal(7, "Set1")[c(2)], "gray35") %>% 
                                     setNames(levels(meta.data$Treatment)),
                      "Prebiotic" = c("gray35", brewer.pal(4, "Set1")) %>% 
                                     setNames(levels(meta.data$Prebiotic)),
-                     "TreatmentDay" = brewer.pal(7, "Accent")[c(1,2,3,7)] %>% 
+                     "TreatmentTestDay" = brewer.pal(7, "Accent")[c(1,2,3,7)] %>% 
                                     setNames(levels(meta.data$TreatmentDay)), 
-                     "Resp" = c("gray35", "forestgreen") %>% 
-                                    setNames(levels(meta.data$Resp)))
+                     "Resp" = c("forestgreen","gray35") %>% 
+                                    setNames(levels(meta.data$Resp)), 
+                     "RespTestDay" = brewer.pal(7, "Accent")[c(1,2,3,7)] %>% 
+                                        setNames(levels(meta.data$RespTestDay)))
 
 #-------------------------------------------------------------------------------
 # Write data
 #-------------------------------------------------------------------------------
 dir.create("out/supp/")
 
-save(list = c("pss.ls", "ps.meta", "meta.data", "color.sch.ls"),
+save(list = c("ps.ls", "ps.meta", "meta.data", 
+              "color.sch.ls", "prev.tabs.ls"),
      file = "out/supp/0_data.RData")
+
+rm(list = ls())
