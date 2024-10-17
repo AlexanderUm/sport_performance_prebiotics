@@ -187,9 +187,11 @@ for(i.set in names(alpha.res.ls[["index"]])) {
                            theme_bw() + 
                            scale_color_manual(values = color.sch.ls$Prebiotic) + 
                            xlab("Test Day") +
-                           theme(axis.title.x = element_text(), 
+                           theme(axis.title = element_text(size = 12), 
+                                 axis.text = element_text(size = 12),
                                  panel.grid.major = element_blank(), 
-                                 panel.grid.minor = element_blank()) + 
+                                 panel.grid.minor = element_blank(), 
+                                 strip.text = element_text(size = 12)) + 
                            guides(colour = guide_legend(order = 2), 
                                   linetype = guide_legend(order = 1))
      

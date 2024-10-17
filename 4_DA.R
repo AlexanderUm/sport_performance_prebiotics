@@ -332,7 +332,8 @@ for(i.prm in 1:nrow(prm.heat.grid)) {
                                                  preb.col)),
                                 gp = gpar(col = "gray10", lwd = 0.001), 
                                 simple_anno_size = unit(0.35, "cm"), 
-                                annotation_name_gp = gpar(fontsize = 8), 
+                                annotation_name_gp = gpar(fontsize = 9, 
+                                                          fontface = "bold"), 
                                 annotation_name_side = "left")
   
   ps.meta.ord$Split_col <- paste0(ps.meta.ord[[gr.col.inst]], ":", 
@@ -376,22 +377,23 @@ for(i.prm in 1:nrow(prm.heat.grid)) {
     row.anot.plot <- row.anot.plot + 
                         rowAnnotation(
                          "pval" = anno_text(anot.inst,  
-                                               gp = gpar(fontsize = 6)), 
+                                               gp = gpar(fontsize = 12)), 
                           "Coef" = anno_barplot(coef.inst, 
                                              width = unit(1.5, "cm"), 
                                              baseline = 0, 
                                              ylim = bar.anot.lim, 
-                                             gp = gpar(fontsize = 6, 
+                                             gp = gpar(fontsize = 12, 
                                                        fill = color.inst)), 
                          annotation_name_side = "top", 
                          annotation_name_rot = 0,
-                         annotation_name_gp = gpar(fontsize = 8))
+                         annotation_name_gp = gpar(fontsize = 10,
+                                                   fontface = "bold"))
   }
   
   # Heat map plot size
-  w.heat <- ncol(asv.gr.inst)/10
+  w.heat <- ncol(asv.gr.inst)/20
   
-  h.heat <- nrow(asv.gr.inst)/6
+  h.heat <- nrow(asv.gr.inst)/4
   
   # Plot heatmap 
   #-----------------------------------------------------------------------------
@@ -401,7 +403,7 @@ for(i.prm in 1:nrow(prm.heat.grid)) {
                           width = unit(w.heat, "in"), 
                           height = unit(h.heat, "in"), 
                           column_split = ps.meta.ord$Split_col, 
-                          column_title_gp = gpar(fontsize = 10),
+                          column_title_gp = gpar(fontsize = 12),
                           row_title_gp = gpar(fontsize = 7, 
                                               fontface = "bold", 
                                               fill = "white", 
@@ -416,11 +418,14 @@ for(i.prm in 1:nrow(prm.heat.grid)) {
                           show_row_dend = FALSE, 
                           row_names_side = "left", 
                           rect_gp = gpar(col = "gray40", lwd = 0.001),
-                          row_names_gp = gpar(fontsize = 6.5, 
+                          row_names_gp = gpar(fontsize = 12, 
                                               fontface = "italic"), 
                           column_title = paste0("Significantly different taxa (", 
-                                                gr.col.inst, ")")) + 
-                  row.anot.plot
+                                                gr.col.inst, ")"), 
+                          row_names_max_width = max_text_width(rownames(asv.gr.inst), 
+                                                               gp = gpar(fontsize = 12)
+                          )) + 
+                          row.anot.plot
   
   
   res.da.comb[["comb"]][[norm.inst]][[gr.col.inst]][[
@@ -430,7 +435,7 @@ for(i.prm in 1:nrow(prm.heat.grid)) {
   
   # Save the plot 
   png(filename = paste0(out.folder,"/plots/heat--", plot.lbl, ".png"), 
-      width = w.heat + 8, 
+      width = w.heat + 10, 
       height = h.heat + 1, 
       units = "in", res = 600)
   draw(heat.map.sig)

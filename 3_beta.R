@@ -265,9 +265,13 @@ pcoa.p <- ggplot(axis.pcoa,
                     labs(fill = paste0(gr.inst, ": Test Day"),
                          color = "Prebiotic",
                          shape = "Test Day") + 
-                    theme(plot.title = element_text(size=11, face="italic"),
+                    theme(plot.title = element_text(size=14, face="italic"),
                           panel.grid.major = element_blank(), 
-                          panel.grid.minor = element_blank())
+                          panel.grid.minor = element_blank(), 
+                          axis.title = element_text(size = 12), 
+                          axis.text = element_text(size = 12), 
+                          legend.text = element_text(size = 12), 
+                          legend.title = element_text(size = 12, face = "bold"))
     
     
     pcoa.plots.ls[[lvl.inst]][[norm.inst]][[gr.inst]][[dist.inst]] <- pcoa.p
