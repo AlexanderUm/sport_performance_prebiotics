@@ -391,7 +391,7 @@ for(i.prm in 1:nrow(prm.heat.grid)) {
   }
   
   # Heat map plot size
-  w.heat <- ncol(asv.gr.inst)/20
+  w.heat <- ncol(asv.gr.inst)/10
   
   h.heat <- nrow(asv.gr.inst)/4
   
